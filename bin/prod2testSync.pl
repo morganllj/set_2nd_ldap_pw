@@ -10,6 +10,9 @@ use Net::LDAP;
 use Config::Fast;
 $Config::Fast::Arrays = '1';
 use Net::SMTP;
+use Digest::SHA1;
+use MIME::Base64;
+use Getopt::Std;
 
 ############################################
 ## Globals #################################
@@ -25,6 +28,14 @@ if (length($sec)  == 1) {$sec = "0$sec";}
 our $fyear = $year + 1900;
 
 ###########################################
+
+my %opts;
+getopts('ndh', \%opts);
+
+exists ($opts{n}) && print "-n used, ldap will not be modified\n";
+exists ($opts{d}) && print "-d used, debugging will be printed\n";
+exists ($opts{h}) && print "usage: $0 [-d] [-n] [-h]\n";
+print "\n";
 
 sub genPassword {
 	
@@ -61,15 +72,31 @@ sub getWordList {
     return (@wordlist);
 }
 
-sub genPCode {
-	
-	my @wordlist = @_;
-	
+
+sub getRandomWord {
+    my @wordlist = @_;
+
     my $word = $wordlist[int(rand($#wordlist))];
     while (($word =~ m/[Ll]/)||($word =~ m/[Oo]/)) { 
     	
     		$word = $wordlist[int(rand($#wordlist))];  
     }
+
+
+    return $word;
+}
+
+sub genPCode {
+    my @wordlist = @_;
+	
+    # my $word = $wordlist[int(rand($#wordlist))];
+    # while (($word =~ m/[Ll]/)||($word =~ m/[Oo]/)) { 
+    	
+    # 		$word = $wordlist[int(rand($#wordlist))];  
+    # }
+
+    my $word = getRandomWord(@wordlist);
+    my $salt = getRandomWord(@wordlist);
     
     my $num = int(rand(9999)) + 1000;
     while (($num =~ m/[0]/)||($num =~ m/[1]/)) { 
@@ -77,24 +104,32 @@ sub genPCode {
     		undef $num;
     		$num = int(rand(9999)) + 1000;  
     }
+    my $password = sprintf("%s%04d", $word, $num);
 
-    return sprintf("%s%04d", $word, $num);
+    my $ctx = Digest::SHA1->new;
+    $ctx->add($salt);
+    $ctx->add($password);
+
+#    return sprintf("%s%04d", $word, $num);
+    return ('{SSHA}' . encode_base64($ctx->digest . $salt, ''), $password);
 }
+
+
 
 sub mailPassword {
 	
 	my $weekOf = shift;
 	my $word = shift;
 
-	my $smtp = Net::SMTP->new("hostname") || die "cannot connect to mailserver";
-	$smtp->mail("sun-admin\@domain.org");
-	$smtp->recipient("username\@domain.org");
+	my $smtp = Net::SMTP->new("smtp.domain.org") || die "cannot connect to mail server smtp.domain.org";
+	$smtp->mail("alias\@domain.org");
+	$smtp->recipient("alias\@domain.org");
 	$smtp->to("alias\@domain.org");
-	$smtp->cc("username\@domain.org");
+	$smtp->cc("alias\@domain.org");
 	$smtp->data();
-	$smtp->datasend("From: sun-admin\@domain.org\n");
+	$smtp->datasend("From: alias\@domain.org\n");
 	$smtp->datasend("To: alias\@domain.org\n");
-	$smtp->datasend("Cc: username\@domain.org\n");
+	$smtp->datasend("Cc: alias\@domain.org\n");
 	$smtp->datasend("Subject: Test LDAP Password for week of: $weekOf\n");
 	$smtp->datasend("Hello Developers,\n");
 	$smtp->datasend("\n");
@@ -102,8 +137,8 @@ sub mailPassword {
 	$smtp->datasend("*****  THIS IS THE REAL PASSWORD FOR THE WEEK! *****\n");
 	$smtp->datasend("\n");
 	$smtp->datasend("Thanks,\n");
-	$smtp->datasend("School Department of Philadelphia\n");
 	$smtp->datasend("Technology Services\n");
+	$smtp->datasend("Org Name here\n");
 	$smtp->dataend();
 	$smtp->quit();
 
@@ -121,37 +156,82 @@ sub changePassword {
                         );
 	
 		
+	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)))";
+	print "searching: $filter\n";
 	$srch = $ldap->search( # perform a search
-	
                            base   => "$cf{ldap_base}",
-                           filter => "( uid=* )",
-                           attrs => "[ ]"
+#                           filter => "( uid=* )",
+                           filter => $filter,
+                           attrs => "[ 'userpassword' ]"
                             
                           );
                       
 	$srch->code && die $srch->error;
 	
-	if (!$srch->entries) { 
-		
-		 
-		$srch = $ldap->unbind; 
-		next; 
-	}
-		
-		
+	# unnecessary, I think.  mj.
+	# if (!$srch->entries) { 
+	# 	$srch = $ldap->unbind; 
+	# 	next; 
+	# }
+
+	my %passwords;
 	foreach my $entry ($srch->entries) {
-			
-		my $dn = $entry->dn;
-		print "$dn\n";		
-						
-		my $mesg = $ldap->modify( $dn,
-			replace => { userPassword => "$pword" } );
-							
-		$mesg->code && warn $mesg->error;
-	
-		
+	    my @pass = $entry->get_value('userpassword');
+	    for my $pass (@pass) {
+		if (exists ($passwords{$pass})) { 
+		    $passwords{$pass}++;
+		} else {
+		    $passwords{$pass} = 1;
 		}
-			
+	    }
+	}
+
+	my ($count, $pass_to_replace);
+	$count=0;
+	for my $k (keys %passwords) {
+	    if ($passwords{$k} > $count) {
+		$pass_to_replace = $k;
+		$count = $passwords{$k};
+	    }
+
+	}
+
+	my $percent = ($count / scalar (keys %passwords)) * 100;
+	print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n";
+
+	foreach my $entry ($srch->entries) {
+	    my $dn = $entry->dn;
+	    print "$dn\n"
+	      if (exists $opts{d});
+
+	    # my $mesg = $ldap->modify( $dn,
+	    # 	replace => { userPassword => "$pword" } );
+	    # $mesg->code && warn $mesg->error;
+
+	    if ($percent > 99) {  # if 99% of entries have a common
+                                  # password then remove that password
+                                  # as it's the old fall through
+                                  # password
+		my @pass = $entry->get_value('userpassword');
+		for my $pass (@pass) {
+		    if ($pass eq $pass_to_replace) {
+			print "\tdeleting $pass..\n"
+			  if (exists $opts{d});
+			if (!exists $opts{n}) {
+			    my $r = $ldap->modify($dn, delete => {userpassword => $pass});
+			    $r->code && due $r->error;
+			}
+		    }
+		}
+	    }
+	    print "\tadding $pword..\n"
+	      if (exists $opts{d});
+	    if (!exists ($opts{n})) {
+	    	my $r = $ldap->modify ($dn, add => {userpassword => $pword});
+	    	$r->code && due $r->error;
+	    }
+	}
+	
 	$srch = $ldap->unbind;	
 	
 	return 0;
@@ -166,10 +246,15 @@ sub changePassword {
 ### Change Password
 ######my $pword = genPassword();
 my @wordlist = getWordList ();
-my $pword = genPCode(@wordlist);
-changePassword($pword);
-mailPassword("$mon-$mday-$fyear",$pword);
-system("/bin/echo $pword > /path/to/prod2test/archive/$mon-$mday-$fyear.pw");
+my ($hash, $pword) = genPCode(@wordlist);
+print "new hash and password: /$hash/, /$pword/\n\n"
+  if (exists $opts{d});
+#changePassword($pword);
+changePassword($hash);
+#mailPassword("$mon-$mday-$fyear",$pword);
+#system("/bin/echo $pword > /path/to/prod2test/archive/$mon-$mday-$fyear.pw");
+system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
+
 
 
 
