@@ -14,6 +14,10 @@ use Digest::SHA1;
 use MIME::Base64;
 use Getopt::Std;
 
+sub print_usage;
+
+$|=1;
+
 ############################################
 ## Globals #################################
 our %cf = fastconfig();
@@ -30,12 +34,14 @@ our $fyear = $year + 1900;
 ###########################################
 
 my %opts;
-getopts('ndh', \%opts);
+getopts('ndhfa', \%opts);
 
 exists ($opts{n}) && print "-n used, ldap will not be modified\n";
 exists ($opts{d}) && print "-d used, debugging will be printed\n";
-exists ($opts{h}) && print "usage: $0 [-d] [-n] [-h]\n";
-print "\n";
+exists ($opts{f}) && print "-f used, the most common password will be flushed but no password will be added\n";
+exists ($opts{a}) && print "-a used, the common password will be deleted even if it's below 99%\n";
+
+exists ($opts{h}) && print_usage();
 
 sub genPassword {
 	
@@ -89,12 +95,6 @@ sub getRandomWord {
 sub genPCode {
     my @wordlist = @_;
 	
-    # my $word = $wordlist[int(rand($#wordlist))];
-    # while (($word =~ m/[Ll]/)||($word =~ m/[Oo]/)) { 
-    	
-    # 		$word = $wordlist[int(rand($#wordlist))];  
-    # }
-
     my $word = getRandomWord(@wordlist);
     my $salt = getRandomWord(@wordlist);
     
@@ -110,7 +110,6 @@ sub genPCode {
     $ctx->add($salt);
     $ctx->add($password);
 
-#    return sprintf("%s%04d", $word, $num);
     return ('{SSHA}' . encode_base64($ctx->digest . $salt, ''), $password);
 }
 
@@ -122,18 +121,17 @@ sub mailPassword {
 	my $word = shift;
 
 	my $smtp = Net::SMTP->new("smtp.domain.org") || die "cannot connect to mail server smtp.domain.org";
-	$smtp->mail("alias\@domain.org");
-	$smtp->recipient("alias\@domain.org");
-	$smtp->to("alias\@domain.org");
-	$smtp->cc("alias\@domain.org");
+
+
+	$smtp->mail();
+	$smtp->to("dsadmin\@domain.org");
 	$smtp->data();
 	$smtp->datasend("From: alias\@domain.org\n");
-	$smtp->datasend("To: alias\@domain.org\n");
-	$smtp->datasend("Cc: alias\@domain.org\n");
-	$smtp->datasend("Subject: Test LDAP Password for week of: $weekOf\n");
+	$smtp->datasend("To: dsadmin\@domain.org\n");
+	$smtp->datasend("Subject: test.domain.net Password for week of: $weekOf\n");
 	$smtp->datasend("Hello Developers,\n");
 	$smtp->datasend("\n");
-	$smtp->datasend("This weeks password for Test LDAP is --> $word\n");
+	$smtp->datasend("This weeks password for testldap.domain.net is --> $word\n");
 	$smtp->datasend("*****  THIS IS THE REAL PASSWORD FOR THE WEEK! *****\n");
 	$smtp->datasend("\n");
 	$smtp->datasend("Thanks,\n");
@@ -157,10 +155,10 @@ sub changePassword {
 	
 		
 	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)))";
-	print "searching: $filter\n";
+	print "\nsearching: $filter\n"
+	  if (exists($opts{d}));
 	$srch = $ldap->search( # perform a search
                            base   => "$cf{ldap_base}",
-#                           filter => "( uid=* )",
                            filter => $filter,
                            attrs => "[ 'userpassword' ]"
                             
@@ -197,24 +195,21 @@ sub changePassword {
 	}
 
 	my $percent = ($count / scalar (keys %passwords)) * 100;
-	print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n";
+	print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n"
+	  if (exists $opts{d});
 
 	foreach my $entry ($srch->entries) {
 	    my $dn = $entry->dn;
-	    print "$dn\n"
-	      if (exists $opts{d});
 
-	    # my $mesg = $ldap->modify( $dn,
-	    # 	replace => { userPassword => "$pword" } );
-	    # $mesg->code && warn $mesg->error;
-
-	    if ($percent > 99) {  # if 99% of entries have a common
+	    if ($percent > 99 or exists $opts{a}) {  # if 99% of entries have a common
                                   # password then remove that password
                                   # as it's the old fall through
                                   # password
 		my @pass = $entry->get_value('userpassword');
 		for my $pass (@pass) {
 		    if ($pass eq $pass_to_replace) {
+			print "$dn\n"
+			  if (exists $opts{d});
 			print "\tdeleting $pass..\n"
 			  if (exists $opts{d});
 			if (!exists $opts{n}) {
@@ -224,11 +219,15 @@ sub changePassword {
 		    }
 		}
 	    }
-	    print "\tadding $pword..\n"
-	      if (exists $opts{d});
-	    if (!exists ($opts{n})) {
-	    	my $r = $ldap->modify ($dn, add => {userpassword => $pword});
-	    	$r->code && due $r->error;
+	    if (!exists $opts{f}) {
+		print "$dn\n"
+		  if (exists $opts{d});
+		print "\tadding $pword..\n"
+		  if (exists $opts{d});
+		if (!exists ($opts{n})) {
+		    my $r = $ldap->modify ($dn, add => {userpassword => $pword});
+		    $r->code && due $r->error;
+		}
 	    }
 	}
 	
@@ -251,10 +250,21 @@ print "new hash and password: /$hash/, /$pword/\n\n"
   if (exists $opts{d});
 #changePassword($pword);
 changePassword($hash);
-#mailPassword("$mon-$mday-$fyear",$pword);
-#system("/bin/echo $pword > /path/to/prod2test/archive/$mon-$mday-$fyear.pw");
-system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
+if (!exists $opts{f}) {
+    mailPassword("$mon-$mday-$fyear",$pword);
+    system("/bin/echo $pword > /path/to/prod2test-ldaptest/archive/$mon-$mday-$fyear.pw");
+    system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
+}
 
 
 
-
+sub print_usage {
+    print "\n\nusage: $0 [-d] [-n] [-h] [-f] [-a]\n";
+    print "\t-d print debugging\n";
+    print "\t-n print, don't make changes\n";
+    print "\t-h print this help message\n";
+    print "\t-f flush password, don't add another secondary password\n";
+    print "\t-a delete anyway--delete the most common password even if it's not in 99% of accounts\n";
+    print "\t   this is useful if a run was interrupted so modified a lot of accounts but not 99%.\n";
+    exit;
+}
