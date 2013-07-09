@@ -107,8 +107,8 @@ sub genPCode {
     my $password = sprintf("%s%04d", $word, $num);
 
     my $ctx = Digest::SHA1->new;
-    $ctx->add($salt);
     $ctx->add($password);
+    $ctx->add($salt);
 
     return ('{SSHA}' . encode_base64($ctx->digest . $salt, ''), $password);
 }
@@ -124,10 +124,10 @@ sub mailPassword {
 
 
 	$smtp->mail();
-	$smtp->to("dsadmin\@domain.org");
+	$smtp->to("alias\@domain.org");
 	$smtp->data();
 	$smtp->datasend("From: alias\@domain.org\n");
-	$smtp->datasend("To: dsadmin\@domain.org\n");
+	$smtp->datasend("To: alias\@domain.org\n");
 	$smtp->datasend("Subject: test.domain.net Password for week of: $weekOf\n");
 	$smtp->datasend("Hello Developers,\n");
 	$smtp->datasend("\n");
@@ -154,7 +154,8 @@ sub changePassword {
                         );
 	
 		
-	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)))";
+#	my $filter = "(|(objectclass=orgEmployee)(objectclass=orgAssociate))";
+	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))";
 	print "\nsearching: $filter\n"
 	  if (exists($opts{d}));
 	$srch = $ldap->search( # perform a search
@@ -219,6 +220,7 @@ sub changePassword {
 		    }
 		}
 	    }
+
 	    if (!exists $opts{f}) {
 		print "$dn\n"
 		  if (exists $opts{d});
@@ -226,7 +228,7 @@ sub changePassword {
 		  if (exists $opts{d});
 		if (!exists ($opts{n})) {
 		    my $r = $ldap->modify ($dn, add => {userpassword => $pword});
-		    $r->code && due $r->error;
+		    $r->code && die $r->error;
 		}
 	    }
 	}
@@ -249,8 +251,10 @@ my ($hash, $pword) = genPCode(@wordlist);
 print "new hash and password: /$hash/, /$pword/\n\n"
   if (exists $opts{d});
 #changePassword($pword);
+
 changePassword($hash);
-if (!exists $opts{f}) {
+
+if (!exists $opts{f} && !exists $opts{n}) {
     mailPassword("$mon-$mday-$fyear",$pword);
     system("/bin/echo $pword > /path/to/prod2test-ldaptest/archive/$mon-$mday-$fyear.pw");
     system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
