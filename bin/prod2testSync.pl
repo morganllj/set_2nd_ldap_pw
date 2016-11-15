@@ -155,7 +155,7 @@ sub changePassword {
 	
 		
 #	my $filter = "(|(objectclass=orgEmployee)(objectclass=orgAssociate))";
-	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))";
+	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))";
 	print "\nsearching: $filter\n"
 	  if (exists($opts{d}));
 	$srch = $ldap->search( # perform a search
