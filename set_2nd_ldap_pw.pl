@@ -16,16 +16,22 @@ sub print_usage;
 
 $|=1;
 
-our %cf = fastconfig();
-our $script = "$cf{scriptname}";
-
 my %opts;
-getopts('ndhfa', \%opts);
+getopts('ndhfac:', \%opts);
 
 exists ($opts{n}) && print "-n used, ldap will not be modified\n";
 exists ($opts{d}) && print "-d used, debugging will be printed\n";
 exists ($opts{f}) && print "-f used, the most common password will be flushed but no password will be added\n";
 exists ($opts{a}) && print "-a used, the common password will be deleted even if it's below 99%\n";
+exists ($opts{c}) || print_usage();
+
+if (exists $opts{f} && exists $opts{a}) {
+    print "-f and -a cannot be specified together\n";
+    print_usage();
+}
+
+our %cf;
+require $opts{c};
 
 exists ($opts{h}) && print_usage();
 
@@ -48,7 +54,8 @@ sub getWordList {
 	
     #open(WORDLIST, "$cf{basedir}/etc/wordlist.txt") or die "$subname: can't open wordlist.txt : $!";
 
-    my $wordlist_dir = dirname($0) . "/../etc";
+#    my $wordlist_dir = dirname($0) . "/../etc";
+    my $wordlist_dir = dirname($0);
     #open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "$subname: can't open wordlist.txt : $!";
     my $wordlist = $wordlist_dir . "/wordlist.txt";
     print "open wordlist: ", $wordlist, "\n"
@@ -137,7 +144,8 @@ sub changePassword {
                         );
 		
 #	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))";
-	my $filter = "(|(uid=morgan)(uid=kacless))";
+	#	my $filter = "(orghomeorgcd=95*)";
+	my $filter = "(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))";
 	print "\nsearching: $filter\n"
 	  if (exists($opts{d}));
 	$srch = $ldap->search( # perform a search
@@ -162,7 +170,7 @@ sub changePassword {
 	    }
 	}
 
-	# find the most common pass and it's count
+	# find the most common pass and its count
 	my ($count, $pass_to_replace);
 	$count=0;
 	for my $k (keys %passwords) {
@@ -181,7 +189,7 @@ sub changePassword {
 	    }
 	}
 
-	print "passwords: ", Dumper %passwords;
+#	print "passwords: ", Dumper %passwords;
 
 	my $percent;
 	if ($count > 0) {
@@ -205,8 +213,13 @@ sub changePassword {
 		# the common pass--common pass must be in 99% of users
 		# or the userneeds to specify -a to pull most
 		# common pass regardless
-		push @saved_pws, $pass
-		  unless (($count > 1 && $pass eq $pass_to_replace) && ($percent > 99 || exists $opts{a}));
+#		unless (($count > 1 && $pass eq $pass_to_replace) && ($percent > 99 || exists $opts{a})) {
+		unless ($pass eq $pass_to_replace) {
+		    print "pushing saved pass $pass\n"
+		      if (exists $opts{d});
+		    push @saved_pws, $pass
+		}
+
 	    }
 
 	    print "$dn\n"
@@ -239,8 +252,8 @@ sub changePassword {
 		}
 	    }
 	    
-	    if (!exists $opts{f}) {
-		print "\t\tadding $pword..\n"
+	    if ((!exists $opts{f} && $percent > 99) || (!exists $opts{f} && exists $opts{a})) {
+		print "\t\tadding 2nd pass $pword..\n"
 		  if (exists $opts{d});
 		push @saved_pws, $pword;
 	    }
@@ -278,7 +291,7 @@ sub changePassword {
 
 my @wordlist = getWordList ();
 my ($hash, $pword) = genPCode(@wordlist);
-print "new hash and password: /$hash/, /$pword/\n\n";
+print "new hash and password: /$hash/, /$pword/\n";
 changePassword($hash);
 
 my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
@@ -300,22 +313,24 @@ if (!exists $opts{f}) {
     # system("/bin/echo $pword > /path/to/prod2test-ldaptest/archive/$mon-$mday-$fyear.pw");
     # system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
 
-    my $archive_file = dirname($0) . "/../archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
+#    my $archive_file = dirname($0) . "/../archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
+    my $archive_file = dirname($0) . "/archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
     print "opening archive file ", $archive_file, "\n"
       if (exists $opts{d});
     # open OUT, basename($0) . $archive_file || warn "problem opening $archive_file";
-    open OUT, ">", $archive_file || warn "problem opening $archive_file";
+    open OUT, ">", $archive_file or warn "problem opening $archive_file";
     print OUT "$pword\n";
     close (OUT);      
 }
 
 sub print_usage {
-    print "\n\nusage: $0 [-d] [-n] [-h] [-f] [-a]\n";
+    print "\nusage: $0 -c config.cf [-d] [-n] [-h] [-f] [-a]\n";
     print "\t-d print debugging\n";
     print "\t-n print, don't make changes\n";
     print "\t-h print this help message\n";
     print "\t-f flush password, don't add another secondary password\n";
-    print "\t-a delete anyway--delete the most common password even if it's not in 99% of accounts\n";
-    print "\t   this is useful if a run was interrupted so modified a lot of accounts but not 99%.\n";
+    print "\t-a delete anyway--delete the most common password even\n";
+    print "\t   if it's not in 99% of accounts.  This is useful if a run\n";
+    print "\t   was interrupted so modified a lot of accounts but not 99%.\n";
     exit;
 }

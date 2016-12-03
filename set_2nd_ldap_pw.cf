@@ -1,10 +1,13 @@
-# script name
-scriptname	prod2testSync	
 
-# LDAP 
-#ldap_server		ldaps://testldapm-mgmt.domain.net
-ldap_server		ldaps://devldapm01-mgmt.domain.net
-ldap_bind_dn	cn=Directory Manager
-ldap_bind_dn_pw	password
-ldap_base		ou=employees,dc=domain,dc=org
-# basedir			/path/to/prod2test-ldaptest
+%cf = (
+    # script name
+    "scriptname" =>	"prod2testSync",
+
+    # LDAP 
+    #ldap_server		ldaps://testldapm-mgmt.domain.net
+    "ldap_server" =>		"ldaps://devldapm01-mgmt.domain.net",
+    "ldap_bind_dn" =>	"cn=Directory Manager",
+    "ldap_bind_dn_pw" =>	"password",
+    "ldap_base" =>		"ou=employees,dc=domain,dc=org",
+    # basedir			/path/to/prod2test-ldaptest
+);
