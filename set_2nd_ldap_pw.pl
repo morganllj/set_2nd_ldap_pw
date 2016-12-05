@@ -3,8 +3,6 @@
 
 use strict;
 use Net::LDAP;
-use Config::Fast;
-$Config::Fast::Arrays = '1';
 use Net::SMTP;
 use Digest::SHA1;
 use MIME::Base64;
@@ -22,7 +20,7 @@ getopts('ndhfac:', \%opts);
 exists ($opts{n}) && print "-n used, ldap will not be modified\n";
 exists ($opts{d}) && print "-d used, debugging will be printed\n";
 exists ($opts{f}) && print "-f used, the most common password will be flushed but no password will be added\n";
-exists ($opts{a}) && print "-a used, the common password will be deleted even if it's below 99%\n";
+exists ($opts{a}) && print "-a used, the common password will be added\n";
 exists ($opts{c}) || print_usage();
 
 if (exists $opts{f} && exists $opts{a}) {
@@ -32,6 +30,7 @@ if (exists $opts{f} && exists $opts{a}) {
 
 our %cf;
 require $opts{c};
+my $percent;
 
 exists ($opts{h}) && print_usage();
 
@@ -49,18 +48,13 @@ sub genPassword {
 
 
 sub getWordList {
-    my $subname = "getWordList";
     my @wordlist;
 	
-    #open(WORDLIST, "$cf{basedir}/etc/wordlist.txt") or die "$subname: can't open wordlist.txt : $!";
-
-#    my $wordlist_dir = dirname($0) . "/../etc";
     my $wordlist_dir = dirname($0);
-    #open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "$subname: can't open wordlist.txt : $!";
     my $wordlist = $wordlist_dir . "/wordlist.txt";
     print "open wordlist: ", $wordlist, "\n"
       if (exists $opts{d});
-    open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "$subname: can't open $wordlist : $!";
+    open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "can't open $wordlist : $!";
     
     while( <WORDLIST> ) {
         chomp($_);
@@ -110,42 +104,39 @@ sub mailPassword {
 	my $weekOf = shift;
 	my $word = shift;
 
-	my $smtp = Net::SMTP->new("smtp.domain.org") || die "cannot connect to mail server smtp.domain.org";
+	my $smtp = Net::SMTP->new($cf{"smtp_server"}) || die "cannot connect to mail server ", $cf{"smtp_server"};
 
 	$smtp->mail();
-#	$smtp->to("alias\@domain.org");
-	$smtp->to("morgan\@domain.org");
+	$smtp->to($cf{"notification_email_to"});
 	$smtp->data();
-	$smtp->datasend("From: alias\@domain.org\n");
-	$smtp->datasend("To: alias\@domain.org\n");
-	$smtp->datasend("Subject: test.domain.net Password for week of: $weekOf\n");
+	$smtp->datasend("From: ", $cf{"notification_email_frm"},"\n");
+	$smtp->datasend("To: ", $cf{"notification_email_to"},"\n");
+	$smtp->datasend("Subject: test Password for week of: $weekOf\n");
 	$smtp->datasend("Hello Developers,\n");
 	$smtp->datasend("\n");
-	$smtp->datasend("This weeks password for testldap.domain.net is --> $word\n");
+	$smtp->datasend("This weeks password for test ldap is --> $word\n");
 	$smtp->datasend("*****  THIS IS THE REAL PASSWORD FOR THE WEEK! *****\n");
 	$smtp->datasend("\n");
 	$smtp->datasend("Thanks,\n");
 	$smtp->datasend("Technology Services\n");
-	$smtp->datasend("Org Name here\n");
 	$smtp->dataend();
 	$smtp->quit();
 
 }
 
 sub changePassword {
-	
 	my $pword = shift;
-	my $subname = "changePassword";
-			
+
+	print "connecting to ", $cf{ldap_server}, "\n"
+	  if (exists $opts{d});
 	my $ldap = Net::LDAP->new( "$cf{ldap_server}" ) or die "$@";
 		
 	my $srch = $ldap->bind( "$cf{ldap_bind_dn}",
                         		password => "$cf{ldap_bind_dn_pw}"
                         );
 		
-#	my $filter = "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))";
-	#	my $filter = "(orghomeorgcd=95*)";
-	my $filter = "(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))";
+
+	my $filter = $cf{"ldap_filter"};
 	print "\nsearching: $filter\n"
 	  if (exists($opts{d}));
 	$srch = $ldap->search( # perform a search
@@ -189,9 +180,6 @@ sub changePassword {
 	    }
 	}
 
-#	print "passwords: ", Dumper %passwords;
-
-	my $percent;
 	if ($count > 0) {
 #	    $percent = ($count / scalar (keys %passwords)) * 100;
 	    $percent = ($count / $user_count) * 100;
@@ -209,14 +197,12 @@ sub changePassword {
 
 	    my @pass = $entry->get_value('userpassword');
 	    for my $pass (@pass) {
-		# We store passwords in the user entry that are not
-		# the common pass--common pass must be in 99% of users
-		# or the userneeds to specify -a to pull most
-		# common pass regardless
-#		unless (($count > 1 && $pass eq $pass_to_replace) && ($percent > 99 || exists $opts{a})) {
-		unless ($pass eq $pass_to_replace) {
-		    print "pushing saved pass $pass\n"
-		      if (exists $opts{d});
+		# save all passwords in the user account except the
+		# common password.  Treat the common password as a
+		# saved pass if the replace_percent is not reached but
+		# the user has not requested a flush
+#		unless ($pass eq $pass_to_replace || ($percent < $cf{"replace_percent"} && !exists $opts{f})) {
+		unless ($pass eq $pass_to_replace && ($percent > $cf{"replace_percent"} || exists $opts{f})) {
 		    push @saved_pws, $pass
 		}
 
@@ -240,7 +226,11 @@ sub changePassword {
 	      if (exists $opts{d});
 	    if (!exists $opts{n}) {
 		my $r = $ldap->modify ($dn, delete => ['userPassword']);
-		$r->code && die $r->error;
+		#		$r->code && die $r->error;
+		if ($r->code) {
+		    die $r->error
+		      unless ($r->error =~ /No such attribute/);
+		}
 	    }
 
 	    print "\tadding/re-adding userpassword\n"
@@ -251,8 +241,9 @@ sub changePassword {
 		    print "\t\tadding $p\n";
 		}
 	    }
-	    
-	    if ((!exists $opts{f} && $percent > 99) || (!exists $opts{f} && exists $opts{a})) {
+
+	    # only put in the new 2nd pass if a high enough percent or requested by the user
+	    if ((!exists $opts{f} && $percent > $cf{"replace_percent"}) || (!exists $opts{f} && exists $opts{a})) {
 		print "\t\tadding 2nd pass $pword..\n"
 		  if (exists $opts{d});
 		push @saved_pws, $pword;
@@ -260,19 +251,13 @@ sub changePassword {
 
 	    if (!exists ($opts{n})) {
 		my $r = $ldap->modify ($dn, add => {userpassword => \@saved_pws});
-		$r->code && die $r->error;
+#		$r->code && die $r->error;
+		if ($r->code) {
+		    die $r->error
+		      unless ($r->error =~ /no values given/);
+		}
 	    }
 
-	    # if (!exists $opts{f}) {
-	    # 	# # print "$dn\n"
-	    # 	# #   if (exists $opts{d});
-	    # 	# print "\tadding $pword..\n"
-	    # 	#   if (exists $opts{d});
-	    # 	# if (!exists ($opts{n})) {
-	    # 	#     my $r = $ldap->modify ($dn, add => {userpassword => $pword});
-	    # 	#     $r->code && die $r->error;
-	    # 	# }
-	    # }
 	}
 	
 	$srch = $ldap->unbind;	
@@ -282,12 +267,6 @@ sub changePassword {
 
 ###################################################
 ### Main ##########################################
-
-### Synchronize people entries
-
-
-### Change Password
-######my $pword = genPassword();
 
 my @wordlist = getWordList ();
 my ($hash, $pword) = genPCode(@wordlist);
@@ -308,16 +287,17 @@ $sec = "0$sec"
   if (length($sec)  == 1);
 my $fyear = $year + 1900;
 
-if (!exists $opts{f}) {    
-    mailPassword("$mon-$mday-$fyear",$pword);
-    # system("/bin/echo $pword > /path/to/prod2test-ldaptest/archive/$mon-$mday-$fyear.pw");
-    # system("/bin/echo $pword > $cf{basedir}/archive/$mon-$mday-$fyear.pw");
+#if (!exists $opts{f}) {
 
-#    my $archive_file = dirname($0) . "/../archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
+if ((!exists $opts{f} && $percent > $cf{"replace_percent"}) || (!exists $opts{f} && exists $opts{a})) {
+    print "emailing password\n"
+      if (exists($opts{d}));
+    mailPassword("$mon-$mday-$fyear",$pword);
+
     my $archive_file = dirname($0) . "/archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
     print "opening archive file ", $archive_file, "\n"
       if (exists $opts{d});
-    # open OUT, basename($0) . $archive_file || warn "problem opening $archive_file";
+
     open OUT, ">", $archive_file or warn "problem opening $archive_file";
     print OUT "$pword\n";
     close (OUT);      
@@ -330,7 +310,8 @@ sub print_usage {
     print "\t-h print this help message\n";
     print "\t-f flush password, don't add another secondary password\n";
     print "\t-a delete anyway--delete the most common password even\n";
-    print "\t   if it's not in 99% of accounts.  This is useful if a run\n";
-    print "\t   was interrupted so modified a lot of accounts but not 99%.\n";
+    print "\t   if it's not in \$cf{replace_percent} of accounts.  This\n";
+    print "\t   is useful if a run was interrupted so modified a lot \n";
+    print "\t   of accounts but not sufficient replace percentage.\n";
     exit;
 }
