@@ -39,9 +39,9 @@ sub genPassword {
 
 	for ( 1 .. 10 ) {
 		my @alpha = (1 .. 10, "a" .. "z", "A" .. "Z");
-		my $charc = $alpha[int(rand($#alpha))];
+		my $char = $alpha[int(rand($#alpha))];
 	
-		$word = $word . $charc;
+		$word = $word . $char;
 	}
 	return $word;
 }
@@ -52,12 +52,12 @@ sub getWordList {
 	
     my $wordlist_dir = dirname($0);
     my $wordlist = $wordlist_dir . "/wordlist.txt";
-    print "open wordlist: ", $wordlist, "\n"
+    print "opening wordlist: ", $wordlist, "\n"
       if (exists $opts{d});
     open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "can't open $wordlist : $!";
     
-    while( <WORDLIST> ) {
-        chomp($_);
+    while(<WORDLIST>) {
+        chomp;
         push(@wordlist, $_);
     }
     
@@ -100,7 +100,6 @@ sub genPCode {
 
 
 sub mailPassword {
-	
 	my $weekOf = shift;
 	my $word = shift;
 
@@ -112,16 +111,12 @@ sub mailPassword {
 	$smtp->datasend("From: ", $cf{"notification_email_frm"},"\n");
 	$smtp->datasend("To: ", $cf{"notification_email_to"},"\n");
 	$smtp->datasend("Subject: test Password for week of: $weekOf\n");
-	$smtp->datasend("Hello Developers,\n");
 	$smtp->datasend("\n");
 	$smtp->datasend("This weeks password for test ldap is --> $word\n");
 	$smtp->datasend("*****  THIS IS THE REAL PASSWORD FOR THE WEEK! *****\n");
 	$smtp->datasend("\n");
-	$smtp->datasend("Thanks,\n");
-	$smtp->datasend("Technology Services\n");
 	$smtp->dataend();
 	$smtp->quit();
-
 }
 
 sub changePassword {
@@ -131,10 +126,7 @@ sub changePassword {
 	  if (exists $opts{d});
 	my $ldap = Net::LDAP->new( "$cf{ldap_server}" ) or die "$@";
 		
-	my $srch = $ldap->bind( "$cf{ldap_bind_dn}",
-                        		password => "$cf{ldap_bind_dn_pw}"
-                        );
-		
+	my $srch = $ldap->bind( "$cf{ldap_bind_dn}", password => "$cf{ldap_bind_dn_pw}");
 
 	my $filter = $cf{"ldap_filter"};
 	print "\nsearching: $filter\n"
@@ -143,7 +135,7 @@ sub changePassword {
                            base   => "$cf{ldap_base}",
                            filter => $filter,
                            attrs => "[ 'userpassword' ]");
-                      
+
 	$srch->code && die $srch->error;
 
 	# keep count of instances of all passwords
@@ -180,8 +172,8 @@ sub changePassword {
 	    }
 	}
 
+	$percent = 0;
 	if ($count > 0) {
-#	    $percent = ($count / scalar (keys %passwords)) * 100;
 	    $percent = ($count / $user_count) * 100;
 	
 	    print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n"
@@ -201,11 +193,9 @@ sub changePassword {
 		# common password.  Treat the common password as a
 		# saved pass if the replace_percent is not reached but
 		# the user has not requested a flush
-#		unless ($pass eq $pass_to_replace || ($percent < $cf{"replace_percent"} && !exists $opts{f})) {
 		unless ($pass eq $pass_to_replace && ($percent > $cf{"replace_percent"} || exists $opts{f})) {
 		    push @saved_pws, $pass
 		}
-
 	    }
 
 	    print "$dn\n"
@@ -219,14 +209,12 @@ sub changePassword {
 		    die $r->error
 		      unless ($r->error =~ /No such attribute/);
 		}
-		  
 	    }
 
 	    print "\tdeleting userPassword\n"
 	      if (exists $opts{d});
 	    if (!exists $opts{n}) {
 		my $r = $ldap->modify ($dn, delete => ['userPassword']);
-		#		$r->code && die $r->error;
 		if ($r->code) {
 		    die $r->error
 		      unless ($r->error =~ /No such attribute/);
@@ -251,13 +239,11 @@ sub changePassword {
 
 	    if (!exists ($opts{n})) {
 		my $r = $ldap->modify ($dn, add => {userpassword => \@saved_pws});
-#		$r->code && die $r->error;
 		if ($r->code) {
 		    die $r->error
 		      unless ($r->error =~ /no values given/);
 		}
 	    }
-
 	}
 	
 	$srch = $ldap->unbind;	
@@ -270,7 +256,8 @@ sub changePassword {
 
 my @wordlist = getWordList ();
 my ($hash, $pword) = genPCode(@wordlist);
-print "new hash and password: /$hash/, /$pword/\n";
+print "new hash and password: /$hash/, /$pword/\n"
+  if (exists $opts{d});
 changePassword($hash);
 
 my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
@@ -286,8 +273,6 @@ $min = "0$min"
 $sec = "0$sec"
   if (length($sec)  == 1);
 my $fyear = $year + 1900;
-
-#if (!exists $opts{f}) {
 
 if ((!exists $opts{f} && $percent > $cf{"replace_percent"}) || (!exists $opts{f} && exists $opts{a})) {
     print "emailing password\n"

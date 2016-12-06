@@ -1,22 +1,13 @@
 
  %cf = (
-    # script name
-    "scriptname" =>	"prod2testSync",
-
-    # LDAP 
-    #ldap_server		ldaps://testldapm-mgmt.domain.net
-    "ldap_server" =>		"ldaps://devldapm01-mgmt.domain.net",
-    "ldap_bind_dn" =>	"cn=set2ndpw,ou=svc_accts,dc=domain,dc=org",
-    "ldap_bind_dn_pw" =>	"password",
-    "ldap_base" =>		"ou=employees,dc=domain,dc=org",
-     # basedir			/path/to/prod2test-ldaptest
-     "notification_email_to" => "morgan\@domain.org",
-#     "notification_email_to" => "alias\@domain.org",
+    "ldap_server" => "ldaps://host.domain.net",
+    "ldap_bind_dn" => "cn=set2ndpw,ou=svc_accts,dc=domain,dc=org",
+    "ldap_bind_dn_pw" => "password",
+    "ldap_base" => "dc=domain,dc=org",
+     "notification_email_to" => "alias\@domain.org",
      "notification_email_frm" => "alias\@domain.org",
      "smtp_server" => "smtp.domain.org",
-#     "ldap_filter" => "(orghomeorgcd=95*)",
      "ldap_filter" => "(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))",
-#     "ldap_filter" => "(&(|(objectclass=orgEmployee)(objectclass=orgAssociate)(objectclass=orgExternalEmployee))(!(orgHomeOrgCD=9500))(!(orgHomeOrgCD=9HF0))(!(orgHomeOrgCD=9420))(!(orgHomeOrgCD=9050))(!(orgHomeOrgCD=9820))(!(orgHomeOrgCD=9MV0)))",
      # the percentage at which a common password is considered the 2nd password to remote
      # the smaller your user count the smaller this number
      "replace_percent" => "99"
