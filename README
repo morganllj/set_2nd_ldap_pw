@@ -1,0 +1,7 @@
+Add a second password to records in ldap identified by an ldapsearch.
+
+Capable of locating prior "second" password by percentage of values and replacing it.
+
+It has a minor bug in that it will delete and re-add all passwords regardless of whether it's adding a second password.
+
+The weird logic that removes passwordHistory and userPassword before adding back existing userPassword(s) and 2nd password if applicable is required to work around 389 directory password history limitations.  It does remove passwordHistory so you'll lose passwordHistory.
