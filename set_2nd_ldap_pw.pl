@@ -10,6 +10,12 @@ use Getopt::Std;
 use File::Basename;
 use Data::Dumper;
 
+sub genPassword;
+sub getWordList;
+sub getRandomWord;
+sub genPCode;
+sub mailPassword;
+sub changePassword;
 sub print_usage;
 
 $|=1;
@@ -28,11 +34,48 @@ if (exists $opts{f} && exists $opts{a}) {
     print_usage();
 }
 
+print "\n";
+
 our %cf;
 require $opts{c};
 my $percent;
 
 exists ($opts{h}) && print_usage();
+
+
+my @wordlist = getWordList ();
+my ($pw_hash, $pword) = genPCode(@wordlist);
+print "generated 2nd password: $pword\n";
+changePassword($pw_hash);
+
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+$mon = $mon + 1;
+$mon = "0$mon"
+  if (length($mon)  == 1);
+$mday = "0$mday"
+  if (length($mday) == 1);
+$hour = "0$hour"
+  if (length($hour) == 1);
+$min = "0$min"
+  if (length($min)  == 1);
+$sec = "0$sec"
+  if (length($sec)  == 1);
+my $fyear = $year + 1900;
+
+if ((!exists $opts{f} && $percent > $cf{"replace_percent"}) || (!exists $opts{f} && exists $opts{a})) {
+    print "emailing password\n"
+      if (exists($opts{d}));
+    mailPassword("$mon-$mday-$fyear",$pword);
+
+    my $archive_file = dirname($0) . "/archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
+    print "opening archive file ", $archive_file, "\n"
+      if (exists $opts{d});
+
+    open OUT, ">", $archive_file or warn "problem opening $archive_file";
+    print OUT "$pword\n";
+    close (OUT);      
+}
+
 
 sub genPassword {
 	my $word;
@@ -52,8 +95,7 @@ sub getWordList {
 	
     my $wordlist_dir = dirname($0);
     my $wordlist = $wordlist_dir . "/wordlist.txt";
-    print "opening wordlist: ", $wordlist, "\n"
-      if (exists $opts{d});
+    print "opening wordlist: ", $wordlist, "\n";
     open(WORDLIST, $wordlist_dir . "/wordlist.txt") or die "can't open $wordlist : $!";
     
     while(<WORDLIST>) {
@@ -122,15 +164,14 @@ sub mailPassword {
 sub changePassword {
 	my $pword = shift;
 
-	print "connecting to ", $cf{ldap_server}, "\n"
-	  if (exists $opts{d});
+	print "\n";
+	print "connecting to ", $cf{ldap_server}, "\n";
 	my $ldap = Net::LDAP->new( "$cf{ldap_server}" ) or die "$@";
 		
 	my $srch = $ldap->bind( "$cf{ldap_bind_dn}", password => "$cf{ldap_bind_dn_pw}");
 
 	my $filter = $cf{"ldap_filter"};
-	print "\nsearching: $filter\n"
-	  if (exists($opts{d}));
+	print "searching: $filter\n";
 	$srch = $ldap->search( # perform a search
                            base   => "$cf{ldap_base}",
                            filter => $filter,
@@ -175,13 +216,19 @@ sub changePassword {
 	$percent = 0;
 	if ($count > 0) {
 	    $percent = ($count / $user_count) * 100;
-	
-	    print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n"
-	      if (exists $opts{d});
+
+	    print "\n";
+	    print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n";
 	} else {
 	    print "no common password was found and thus won't be removed.\n";
+	    if (!exists $opts{a}) {
+		print "nothing to be done, exiting.\n";
+		exit;
+	    }
+
 	}
 
+	my $mod_count=0;
 	foreach my $entry ($srch->entries) {
 	    my $dn = $entry->dn;
 
@@ -198,6 +245,8 @@ sub changePassword {
 		}
 	    }
 
+	    $mod_count++;
+	    
 	    print "$dn\n"
 	      if (exists $opts{d});
 
@@ -246,47 +295,14 @@ sub changePassword {
 	    }
 	}
 	
-	$srch = $ldap->unbind;	
+	$srch = $ldap->unbind;
+
+	print "\n";
+	print "modified ", $mod_count, " entries.\n";
 	
 	return 0;
 }
 
-###################################################
-### Main ##########################################
-
-my @wordlist = getWordList ();
-my ($hash, $pword) = genPCode(@wordlist);
-print "new hash and password: /$hash/, /$pword/\n"
-  if (exists $opts{d});
-changePassword($hash);
-
-my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
-$mon = $mon + 1;
-$mon = "0$mon"
-  if (length($mon)  == 1);
-$mday = "0$mday"
-  if (length($mday) == 1);
-$hour = "0$hour"
-  if (length($hour) == 1);
-$min = "0$min"
-  if (length($min)  == 1);
-$sec = "0$sec"
-  if (length($sec)  == 1);
-my $fyear = $year + 1900;
-
-if ((!exists $opts{f} && $percent > $cf{"replace_percent"}) || (!exists $opts{f} && exists $opts{a})) {
-    print "emailing password\n"
-      if (exists($opts{d}));
-    mailPassword("$mon-$mday-$fyear",$pword);
-
-    my $archive_file = dirname($0) . "/archive/${fyear}${mday}${mon}${hour}${mon}${sec}_pass.txt";
-    print "opening archive file ", $archive_file, "\n"
-      if (exists $opts{d});
-
-    open OUT, ">", $archive_file or warn "problem opening $archive_file";
-    print OUT "$pword\n";
-    close (OUT);      
-}
 
 sub print_usage {
     print "\nusage: $0 -c config.cf [-d] [-n] [-h] [-f] [-a]\n";
