@@ -139,8 +139,6 @@ sub genPCode {
     return ('{SSHA}' . encode_base64($ctx->digest . $salt, ''), $password);
 }
 
-
-
 sub mailPassword {
 	my $weekOf = shift;
 	my $word = shift;
@@ -162,18 +160,19 @@ sub mailPassword {
 }
 
 sub changePassword {
-	my $pword = shift;
+    my $pword = shift;
 
+    for my $l (@{$cf{ldap_list}}) {
 	print "\n";
-	print "connecting to ", $cf{ldap_server}, "\n";
-	my $ldap = Net::LDAP->new( "$cf{ldap_server}" ) or die "$@";
+	print "connecting to ", $l->{ldap_server}, "\n";
+	my $ldap = Net::LDAP->new( "$l->{ldap_server}" ) or die "$@";
 		
-	my $srch = $ldap->bind( "$cf{ldap_bind_dn}", password => "$cf{ldap_bind_dn_pw}");
+	my $srch = $ldap->bind( $l->{ldap_bind_dn}, password => $l->{ldap_bind_dn_pw});
 
-	my $filter = $cf{"ldap_filter"};
+	my $filter = $l->{"ldap_filter"};
 	print "searching: $filter\n";
 	$srch = $ldap->search( # perform a search
-                           base   => "$cf{ldap_base}",
+                           base   => $l->{ldap_base},
                            filter => $filter,
                            attrs => "[ 'userpassword' ]");
 
@@ -219,6 +218,7 @@ sub changePassword {
 
 	    print "\n";
 	    print "most common hash: $count, $pass_to_replace, percentage of total: $percent\n";
+	    print "replace_percent is ", $cf{replace_percent}, "\n";
 	} else {
 	    print "no common password was found and thus won't be removed.\n";
 	    if (!exists $opts{a}) {
@@ -245,8 +245,6 @@ sub changePassword {
 		}
 	    }
 
-	    $mod_count++;
-	    
 	    print "$dn\n"
 	      if (exists $opts{d});
 
@@ -285,22 +283,24 @@ sub changePassword {
 		  if (exists $opts{d});
 		push @saved_pws, $pword;
 	    }
-
+	    $mod_count++;
 	    if (!exists ($opts{n})) {
 		my $r = $ldap->modify ($dn, add => {userpassword => \@saved_pws});
 		if ($r->code) {
 		    die $r->error
 		      unless ($r->error =~ /no values given/);
 		}
+
 	    }
 	}
 	
 	$srch = $ldap->unbind;
 
 	print "\n";
-	print "modified ", $mod_count, " entries.\n";
-	
-	return 0;
+	print "read-only, would have "
+	  if (exists $opts{n});
+	print "added ", $mod_count, " second passwords.\n";
+    }
 }
 
 
