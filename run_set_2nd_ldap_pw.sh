@@ -9,6 +9,6 @@ cmd_base=`echo $cmd_base|sed 's/\.sh//'`
 dirname=`dirname $0`
 p=`cd ${dirname} && pwd`;
 
-cmd="${dirname}/${cmd_base}.pl -c ${dirname}/`basename ${p}`.cf $*"
+cmd="${dirname}/${cmd_base}.pl -c ${dirname}/${cmd_base}.cf $*"
 echo $cmd
 $cmd
